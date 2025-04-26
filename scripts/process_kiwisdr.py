@@ -24,10 +24,15 @@ def fetch_kiwisdr_data(url: str) -> str:
         response = requests.get(url, timeout=30)
         response.raise_for_status()
         try:
-            return response.content.decode('utf-8')
+            content = response.content.decode('utf-8')
         except UnicodeDecodeError:
             print("Initial UTF-8 decoding failed, trying latin-1...")
-            return response.content.decode('latin-1')
+            content = response.content.decode('latin-1')
+        
+        # Debug: Print first 500 characters of content
+        print("First 500 characters of received content:")
+        print(content[:500])
+        return content
     except requests.exceptions.RequestException as e:
         print(f"Error fetching data: {e}")
         raise
@@ -40,26 +45,39 @@ def parse_js_data(js_content: str) -> tuple[list, str, str]:
     Raises ValueError if 'kiwisdr_com' is not found or if JSON decoding fails.
     """
     print("Parsing JavaScript data...")
-    match = re.search(r"var\s+kiwisdr_com\s*=\s*(\[.*?\]);", js_content, re.DOTALL | re.MULTILINE)
-    if not match:
-        raise ValueError("Could not find 'var kiwisdr_com' assignment in the JavaScript file.")
-    json_str = match.group(1)
-
+    
+    # Extract timestamps from comments first
     kiwi_timestamp_match = re.search(r"KiwiSDR.com data timestamp:\s*(.*)", js_content)
     gen_timestamp_match = re.search(r"File generation timestamp:\s*(.*)", js_content)
 
     kiwi_timestamp = kiwi_timestamp_match.group(1).strip() if kiwi_timestamp_match else "N/A"
     original_gen_timestamp = gen_timestamp_match.group(1).strip() if gen_timestamp_match else "N/A"
 
-    try:
-        data = json.loads(json_str)
-        print(f"Successfully parsed {len(data)} entries.")
-        return data, kiwi_timestamp, original_gen_timestamp
-    except json.JSONDecodeError as e:
-        print(f"Error decoding JSON: {e}")
-        error_context = json_str[max(0, e.pos-20):min(len(json_str), e.pos+20)]
-        print(f"Context: ...{error_context}...")
-        raise
+    # Try different patterns to find the data array
+    patterns = [
+        r"var\s+kiwisdr_com\s*=\s*(\[.*?\]);",  # Original pattern
+        r"kiwisdr_com\s*=\s*(\[.*?\]);",        # Without 'var'
+        r"var\s+kiwisdr_com\s*=\s*(\[.*?\])",   # Without semicolon
+        r"kiwisdr_com\s*=\s*(\[.*?\])"          # Without 'var' and semicolon
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, js_content, re.DOTALL | re.MULTILINE)
+        if match:
+            json_str = match.group(1)
+            try:
+                data = json.loads(json_str)
+                print(f"Successfully parsed {len(data)} entries.")
+                return data, kiwi_timestamp, original_gen_timestamp
+            except json.JSONDecodeError as e:
+                print(f"Error decoding JSON with pattern '{pattern}': {e}")
+                continue
+
+    # If we get here, none of the patterns worked
+    print("Could not find valid data array in the JavaScript file.")
+    print("Content preview:")
+    print(js_content[:1000])  # Print first 1000 characters for debugging
+    raise ValueError("Could not find 'kiwisdr_com' assignment in the JavaScript file.")
 
 def clean_entry(entry: dict) -> dict:
     """
