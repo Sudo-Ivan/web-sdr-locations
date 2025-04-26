@@ -43,35 +43,46 @@ def clean_json_string(json_str: str) -> str:
     - Removes trailing commas
     - Fixes unterminated strings
     - Removes invalid escape sequences
+    - Adds missing commas before closing brackets/braces
+    - Removes control characters
     """
-    # Remove trailing commas before closing brackets/braces
+    # Attempt to add missing commas before closing brackets/braces
+    # Handles cases like "key": "value" } or "key": 123 } or "key": true }
+    # This is applied BEFORE removing trailing commas to handle cases where both issues exist.
+    json_str = re.sub(r'([^\s,{}\[\]])\s*([}\]])', r'\1,\2', json_str)
+
+    # Remove trailing commas before closing brackets/braces (applied after potential comma insertion)
     json_str = re.sub(r',(\s*[}\]])', r'\1', json_str)
-    
-    # Fix unterminated strings by adding closing quotes
-    json_str = re.sub(r'([^\\])"([^"]*?)([^\\])(\s*[}\]])', r'\1"\2\3"\4', json_str)
-    
-    # Remove invalid escape sequences
-    json_str = re.sub(r'\\([^"\\/bfnrtu])', r'\1', json_str)
-    
+
+    # Fix potentially unterminated strings (simple approach - commented out as potentially risky)
+    # json_str = re.sub(r'([^\\])"([^"]*?)([^\\])(\\s*[}\\]])', r'\\1"\\2\\3"\\4', json_str)
+
+    # Remove invalid escape sequences (simple approach - commented out as potentially risky)
+    # json_str = re.sub(r'\\\\([^"\\\\/bfnrtu])', r'\\1', json_str)
+
+    # Remove control characters except for \t, \n, \r, \f which are valid in JSON strings
+    json_str = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', json_str)
+
     return json_str
 
 def parse_js_data(js_content: str) -> tuple[list, str, str]:
     """
     Parses the JavaScript content to extract the data list and timestamps.
     Extracts the 'kiwisdr_com' variable and timestamps from comments.
+    Attempts to parse each JSON object in the array individually, skipping malformed ones.
     Returns a tuple containing the data list, Kiwi timestamp, and original generation timestamp.
-    Raises ValueError if 'kiwisdr_com' is not found or if JSON decoding fails.
+    Raises ValueError if 'kiwisdr_com' assignment is not found.
     """
     print("Parsing JavaScript data...")
-    
+
     # Extract timestamps from comments first
-    kiwi_timestamp_match = re.search(r"KiwiSDR.com data timestamp:\s*(.*)", js_content)
-    gen_timestamp_match = re.search(r"File generation timestamp:\s*(.*)", js_content)
+    kiwi_timestamp_match = re.search(r"KiwiSDR.com data timestamp:\\s*(.*)", js_content)
+    gen_timestamp_match = re.search(r"File generation timestamp:\\s*(.*)", js_content)
 
     kiwi_timestamp = kiwi_timestamp_match.group(1).strip() if kiwi_timestamp_match else "N/A"
     original_gen_timestamp = gen_timestamp_match.group(1).strip() if gen_timestamp_match else "N/A"
 
-    # Try different patterns to find the data array
+    # Try different patterns to find the data array assignment
     patterns = [
         r"var\s+kiwisdr_com\s*=\s*(\[.*?\]);",  # Original pattern
         r"kiwisdr_com\s*=\s*(\[.*?\]);",        # Without 'var'
@@ -79,30 +90,117 @@ def parse_js_data(js_content: str) -> tuple[list, str, str]:
         r"kiwisdr_com\s*=\s*(\[.*?\])"          # Without 'var' and semicolon
     ]
 
+    json_str = None
     for pattern in patterns:
         match = re.search(pattern, js_content, re.DOTALL | re.MULTILINE)
         if match:
             json_str = match.group(1)
-            try:
-                # Clean the JSON string before parsing
-                cleaned_json = clean_json_string(json_str)
-                data = json.loads(cleaned_json)
-                print(f"Successfully parsed {len(data)} entries.")
-                return data, kiwi_timestamp, original_gen_timestamp
-            except json.JSONDecodeError as e:
-                print(f"Error decoding JSON with pattern '{pattern}': {e}")
-                # Print the problematic part of the JSON
-                error_pos = e.pos
-                start = max(0, error_pos - 50)
-                end = min(len(cleaned_json), error_pos + 50)
-                print(f"Error context: ...{cleaned_json[start:end]}...")
-                continue
+            break
 
-    # If we get here, none of the patterns worked
-    print("Could not find valid data array in the JavaScript file.")
-    print("Content preview:")
-    print(js_content[:1000])  # Print first 1000 characters for debugging
-    raise ValueError("Could not find 'kiwisdr_com' assignment in the JavaScript file.")
+    if json_str is None:
+        print("Could not find 'kiwisdr_com' assignment in the JavaScript file.")
+        print("Content preview:")
+        print(js_content[:1000])
+        raise ValueError("Could not find 'kiwisdr_com' assignment in the JavaScript file.")
+
+    # --- Start individual object parsing ---
+    json_content = json_str.strip()
+    if not (json_content.startswith('[') and json_content.endswith(']')):
+        raise ValueError("Extracted data does not look like a JSON array (missing brackets).")
+
+    # Get content inside brackets
+    inner_content = json_content[1:-1].strip()
+
+    if not inner_content: # Handle empty array
+        print("Parsed 0 entries (empty array).")
+        return [], kiwi_timestamp, original_gen_timestamp
+
+    # --- Use brace counting to find individual objects --- 
+    object_strs = []
+    brace_level = 0
+    current_obj_start = -1
+    in_string = False
+    escape_next = False
+
+    for i, char in enumerate(inner_content):
+        if escape_next:
+            escape_next = False
+            continue
+        
+        if char == '\\':
+            escape_next = True
+            continue
+            
+        if char == '"' :
+             # Toggle in_string state only if not escaped
+             in_string = not in_string
+        
+        if not in_string: # Only count braces outside of strings
+            if char == '{':
+                if brace_level == 0:
+                    current_obj_start = i
+                brace_level += 1
+            elif char == '}':
+                brace_level -= 1
+                if brace_level == 0 and current_obj_start != -1:
+                    object_strs.append(inner_content[current_obj_start : i + 1])
+                    current_obj_start = -1
+                elif brace_level < 0: # Malformed, reset
+                    print(f"Warning: Encountered closing brace without matching open brace near index {i}. Resetting.")
+                    brace_level = 0
+                    current_obj_start = -1 
+    # --- End brace counting ---
+
+    parsed_data = []
+    success_count = 0
+    fail_count = 0
+
+    print(f"Attempting to parse {len(object_strs)} potential objects...")
+
+    for i, obj_str in enumerate(object_strs):
+        obj_str = obj_str.strip()
+        if not obj_str: continue # Skip empty splits resulting from regex
+
+        # Basic check/fix for braces (sometimes split might remove them at edges)
+        if not obj_str.startswith('{'):
+             # Avoid adding if it already starts correctly due to split edge case
+             if not re.match(r"^\\s*\\{", obj_str):
+                obj_str = '{' + obj_str
+        if not obj_str.endswith('}'):
+             # Avoid adding if it already ends correctly
+             if not re.search(r"\\}\\s*$", obj_str):
+                obj_str = obj_str + '}'
+
+        # Final check if it looks like an object
+        if not (obj_str.startswith('{') and obj_str.endswith('}')):
+            print(f"Skipping malformed segment #{i+1}: Not a valid object structure ...{obj_str[:100]}...")
+            fail_count += 1
+            continue
+
+        try:
+            # Clean THIS object string before parsing
+            cleaned_obj_str = clean_json_string(obj_str)
+            data_item = json.loads(cleaned_obj_str)
+            parsed_data.append(data_item)
+            success_count += 1
+        except json.JSONDecodeError as e:
+            fail_count += 1
+            print(f"Failed to parse object #{i+1}: {e}")
+            # Print context if possible
+            error_pos = getattr(e, 'pos', 0) # Use getattr for safety
+            start = max(0, error_pos - 40)
+            end = min(len(cleaned_obj_str), error_pos + 40)
+            context = cleaned_obj_str[start:end].replace('\\n', ' ') # Show context on one line
+            print(f"Context: ...{context}...")
+        except Exception as e: # Catch other potential errors during parsing/cleaning
+             fail_count += 1
+             print(f"Unexpected error parsing object #{i+1}: {e}")
+             print(f"Problematic object string: ...{obj_str[:200]}...")
+
+
+    print(f"Finished parsing: Successfully parsed {success_count} entries, failed/skipped {fail_count} entries.")
+    return parsed_data, kiwi_timestamp, original_gen_timestamp
+    # --- End individual object parsing ---
 
 def clean_entry(entry: dict) -> dict:
     """
