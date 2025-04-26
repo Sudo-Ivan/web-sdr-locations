@@ -113,24 +113,29 @@ def clean_entry(entry: dict) -> dict:
     if 'sdr_hw' in entry:
         hw_str = entry['sdr_hw']
         
+        # Define patterns to clean up common encoding issues
         patterns = [
-            (r'[^\x00-\x7F]+', ' '),
-            (r'\s+', ' '),
-            (r'GPS\s*\|', 'GPS |'),
-            (r'Limits\s*\|', 'Limits |'),
-            (r'\|\s*$', ''),
-            (r'^\s*\|', ''),
+            (r'[^\x00-\x7F]+', ' '),  # Replace non-ASCII characters with space
+            (r'\s+', ' '),            # Replace multiple spaces with single space
+            (r'GPS\s*\|', 'GPS |'),   # Fix GPS separator
+            (r'Limits\s*\|', 'Limits |'), # Fix Limits separator
+            (r'\|\s*$', ''),          # Remove trailing separator
+            (r'^\s*\|', ''),          # Remove leading separator
         ]
         
+        # Apply all patterns
         for pattern, replacement in patterns:
             hw_str = re.sub(pattern, replacement, hw_str)
         
+        # Clean up any remaining issues
         hw_str = hw_str.strip()
         entry['sdr_hw'] = hw_str
 
+    # Clean name field
     if 'name' in entry:
         entry['name'] = re.sub(r'\s+', ' ', entry['name']).strip()
 
+    # Ensure essential fields exist, provide defaults if necessary
     entry.setdefault('name', 'N/A')
     entry.setdefault('url', '#')
     entry.setdefault('status', 'unknown')
@@ -150,6 +155,7 @@ def create_geojson(data: list) -> dict:
     processed_count = 0
     skipped_count = 0
     for entry in data:
+        # Extract and validate GPS coordinates
         gps_match = re.match(r"\(\s*(-?\d+\.?\d*)\s*,\s*(-?\d+\.?\d*)\s*\)", entry.get('gps', ''))
         if gps_match:
             try:
@@ -225,6 +231,7 @@ def write_js(filepath: str, data: list, kiwi_ts: str, original_gen_ts: str):
     current_time_gmt = datetime.now(timezone.utc).strftime("%A, %d-%b-%Y %H:%M:%S GMT")
     current_time_local = datetime.now().strftime("%a %b %d %H:%M:%S %Y")
 
+    # Use json.dumps for proper escaping within the JS string
     json_string = json.dumps(data, indent='\t', ensure_ascii=False)
 
     js_output = f"""// KiwiSDR.com receiver list
@@ -250,14 +257,20 @@ if __name__ == "__main__":
         cleaned_data = [clean_entry(entry) for entry in raw_data]
         print("Cleaning complete.")
 
+        # Write Raw JSON
         write_json(OUTPUT_JSON, cleaned_data)
 
+        # Create and Write GeoJSON
         geojson_data = create_geojson(cleaned_data)
         write_geojson(OUTPUT_GEOJSON, geojson_data)
 
+        # Write Cleaned JavaScript File
         write_js(OUTPUT_JS, cleaned_data, kiwi_timestamp, original_gen_timestamp)
 
         print("\nProcessing finished successfully!")
 
     except Exception as e:
         print(f"\nAn error occurred during processing: {e}")
+        # In a real scenario, you might want to exit with a non-zero code
+        # import sys
+        # sys.exit(1)
