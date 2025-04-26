@@ -1,0 +1,35 @@
+name: Update KiwiSDR Locations
+
+on:
+  workflow_dispatch: # Allow manual triggering
+  schedule:
+    - cron: '0 4 * * *' # Run daily at 4 AM UTC
+
+jobs:
+  update-data:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # Allow committing back to the repo
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Run processing script
+        run: python scripts/process_kiwisdr.py
+
+      - name: Commit and push changes
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "Automated update of KiwiSDR location data"
+          file_pattern: "data/*.*" # Commit generated json, geojson, and js files
+          commit_user_name: "GitHub Actions"
+          commit_user_email: "actions@github.com"
+          commit_author: "GitHub Actions <actions@github.com>" 
