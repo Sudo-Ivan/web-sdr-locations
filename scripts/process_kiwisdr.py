@@ -37,6 +37,24 @@ def fetch_kiwisdr_data(url: str) -> str:
         print(f"Error fetching data: {e}")
         raise
 
+def clean_json_string(json_str: str) -> str:
+    """
+    Cleans the JSON string to handle common issues:
+    - Removes trailing commas
+    - Fixes unterminated strings
+    - Removes invalid escape sequences
+    """
+    # Remove trailing commas before closing brackets/braces
+    json_str = re.sub(r',(\s*[}\]])', r'\1', json_str)
+    
+    # Fix unterminated strings by adding closing quotes
+    json_str = re.sub(r'([^\\])"([^"]*?)([^\\])(\s*[}\]])', r'\1"\2\3"\4', json_str)
+    
+    # Remove invalid escape sequences
+    json_str = re.sub(r'\\([^"\\/bfnrtu])', r'\1', json_str)
+    
+    return json_str
+
 def parse_js_data(js_content: str) -> tuple[list, str, str]:
     """
     Parses the JavaScript content to extract the data list and timestamps.
@@ -66,11 +84,18 @@ def parse_js_data(js_content: str) -> tuple[list, str, str]:
         if match:
             json_str = match.group(1)
             try:
-                data = json.loads(json_str)
+                # Clean the JSON string before parsing
+                cleaned_json = clean_json_string(json_str)
+                data = json.loads(cleaned_json)
                 print(f"Successfully parsed {len(data)} entries.")
                 return data, kiwi_timestamp, original_gen_timestamp
             except json.JSONDecodeError as e:
                 print(f"Error decoding JSON with pattern '{pattern}': {e}")
+                # Print the problematic part of the JSON
+                error_pos = e.pos
+                start = max(0, error_pos - 50)
+                end = min(len(cleaned_json), error_pos + 50)
+                print(f"Error context: ...{cleaned_json[start:end]}...")
                 continue
 
     # If we get here, none of the patterns worked
