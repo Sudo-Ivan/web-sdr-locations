@@ -22,6 +22,13 @@ jobs:
       - name: Install dependencies
         run: pip install requests
 
+      - name: Create data directory
+        run: |
+          mkdir -p data
+          touch data/.gitkeep
+          git add data/.gitkeep
+          git commit -m "Add data directory" || true
+
       - name: Run processing script
         run: python scripts/process_kiwisdr.py
 
