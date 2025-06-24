@@ -2,7 +2,7 @@
 // Automatically generated from https://rx.skywavelinux.com/kiwisdr_com.js
 // KiwiSDR.com data timestamp: N/A
 // Original file generation timestamp: N/A
-// This file generation timestamp: Mon Jun 23 04:16:36 2025 (Monday, 23-Jun-2025 04:16:36 GMT)
+// This file generation timestamp: Tue Jun 24 04:13:15 2025 (Tuesday, 24-Jun-2025 04:13:15 GMT)
 
 var kiwisdr_com =
 [
